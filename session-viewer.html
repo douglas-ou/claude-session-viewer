@@ -301,16 +301,69 @@
     font-size: 13px; margin-top: 10px; transition: border-color 0.15s;
   }
   .drop-zone-inline.drag-over { border-color: var(--accent); color: var(--accent); }
-  .header-file-select {
-    background: var(--surface2); border: 1px solid var(--border);
-    color: var(--text); padding: 3px 8px; border-radius: 6px;
-    font-size: 12px; max-width: 250px; outline: none;
+  /* Sidebar */
+  .sidebar {
+    position: fixed; left: 0; top: 0; bottom: 0; width: 320px;
+    background: var(--surface); border-right: 1px solid var(--border);
+    z-index: 150; display: flex; flex-direction: column;
+    transform: translateX(-100%); transition: transform 0.2s ease;
   }
-  .header-file-select:focus { border-color: var(--accent); }
+  body.sidebar-open .sidebar { transform: translateX(0); }
+  .sidebar-header {
+    padding: 16px; border-bottom: 1px solid var(--border);
+    display: flex; align-items: center; gap: 8px; flex-shrink: 0;
+  }
+  .sidebar-header h2 { font-size: 14px; font-weight: 600; color: var(--accent); flex: 1; }
+  .sidebar-search {
+    width: 100%; background: var(--bg); border: 1px solid var(--border);
+    border-radius: 6px; padding: 7px 10px; font-size: 12px; outline: none; color: var(--text);
+  }
+  .sidebar-search:focus { border-color: var(--accent); }
+  .sidebar-search::placeholder { color: var(--text2); }
+  .sidebar-list { flex: 1; overflow-y: auto; }
+  .sidebar-close {
+    background: none; border: none; cursor: pointer; color: var(--text2);
+    font-size: 18px; padding: 0 4px; line-height: 1;
+  }
+  .sidebar-close:hover { color: var(--text); }
+  .sidebar .project-header { padding: 6px 16px; }
+  .sidebar .file-item { padding: 6px 16px; gap: 8px; }
+  .sidebar .file-item .fi-date { min-width: auto; font-size: 10px; }
+  .sidebar .file-item .fi-title { font-size: 11px; }
+  .sidebar .file-item .fi-size { display: none; }
+  .sidebar .file-item .fi-sub { font-size: 9px; }
+  .sidebar .file-item.active { background: #ddf4ff; }
+  /* Main content shift */
+  body.sidebar-open .header,
+  body.sidebar-open .stats-bar,
+  body.sidebar-open .chart-section,
+  body.sidebar-open .timeline-viz,
+  body.sidebar-open .toolbar,
+  body.sidebar-open .timeline,
+  body.sidebar-open .footer-info {
+    margin-left: 320px;
+  }
+  .sidebar-toggle {
+    background: none; border: 1px solid var(--border); cursor: pointer;
+    color: var(--text2); font-size: 16px; padding: 2px 8px; border-radius: 4px;
+    line-height: 1;
+  }
+  .sidebar-toggle:hover { color: var(--text); border-color: var(--text2); }
   .chooser-empty { padding: 40px 20px; text-align: center; color: var(--text2); font-size: 13px; }
 </style>
 </head>
 <body>
+
+<div class="sidebar" id="sidebar">
+  <div class="sidebar-header">
+    <h2>Sessions</h2>
+    <button class="sidebar-close" id="sidebarClose" title="Close sidebar">&times;</button>
+  </div>
+  <div style="padding:8px 16px;flex-shrink:0">
+    <input type="text" class="sidebar-search" id="sidebarSearch" placeholder="Search sessions...">
+  </div>
+  <div class="sidebar-list" id="sidebarList"></div>
+</div>
 
 <div class="loading-overlay hidden" id="loading">
   <div class="spinner"></div>
@@ -335,8 +388,8 @@
 </div>
 
 <div class="header">
+  <button class="sidebar-toggle" id="sidebarToggle" title="Toggle sidebar">&#9776;</button>
   <h1>Session Viewer</h1>
-  <select class="header-file-select" id="headerFileSelect" style="display:none"><option value="">Switch session...</option></select>
   <div class="meta" id="headerMeta"></div>
 </div>
 
@@ -437,6 +490,10 @@ function onFileLoaded(displayName, title) {
   document.title = 'Session Viewer — ' + (title || shortId);
   document.getElementById('fileChooser').classList.add('hidden');
   document.getElementById('loading').classList.add('hidden');
+  // Show sidebar with updated active state
+  renderSidebarList(cachedFileList);
+  document.body.classList.add('sidebar-open');
+  setTimeout(scrollToActiveSidebarItem, 50);
   renderStats();
   filterAndRender();
 }
@@ -506,32 +563,78 @@ function renderFileList(files) {
   document.getElementById('chooserStatus').textContent = files.length + ' sessions';
 }
 
-function populateHeaderSelect(files) {
-  const sel = document.getElementById('headerFileSelect');
-  sel.innerHTML = '<option value="">Switch session...</option>';
-  // Show most recent 100, grouped by project
-  const recent = files.slice(0, 100);
+function renderSidebarList(files) {
+  const list = document.getElementById('sidebarList');
+  list.innerHTML = '';
+  if (!files.length) {
+    list.innerHTML = '<div class="chooser-empty">No sessions found</div>';
+    return;
+  }
   const groups = {};
   const groupOrder = [];
-  for (const f of recent) {
+  for (const f of files) {
     const proj = f.project || 'unknown';
     if (!groups[proj]) { groups[proj] = []; groupOrder.push(proj); }
     groups[proj].push(f);
   }
+  const frag = document.createDocumentFragment();
   for (const proj of groupOrder) {
-    const optgroup = document.createElement('optgroup');
-    optgroup.label = proj;
-    for (const f of groups[proj]) {
-      const opt = document.createElement('option');
-      opt.value = f.path;
-      const title = f.title ? (f.title.length > 40 ? f.title.slice(0, 40) + '...' : f.title) : f.uuid.slice(0, 8);
-      opt.textContent = title;
-      if (f.path === currentFilePath) opt.selected = true;
-      optgroup.appendChild(opt);
+    const items = groups[proj];
+    const group = document.createElement('div');
+    group.className = 'project-group';
+    const header = document.createElement('div');
+    header.className = 'project-header';
+    const headerLabel = document.createElement('span');
+    headerLabel.textContent = proj;
+    const headerCount = document.createElement('span');
+    headerCount.className = 'count';
+    headerCount.textContent = items.length;
+    header.appendChild(headerLabel);
+    header.appendChild(headerCount);
+    group.appendChild(header);
+    for (const f of items) {
+      const item = document.createElement('div');
+      item.className = 'file-item' + (f.path === currentFilePath ? ' active' : '');
+      item.dataset.path = f.path;
+      const shortUuid = f.uuid.length > 8 ? f.uuid.slice(0, 8) : f.uuid;
+      const isSub = f.path.includes('/subagents/');
+      const title = f.title || '';
+      const dateStr = fmtDateAbsolute(f.mtime);
+
+      const dateSpan = document.createElement('span');
+      dateSpan.className = 'fi-date';
+      dateSpan.textContent = dateStr;
+      item.appendChild(dateSpan);
+
+      const titleSpan = document.createElement('span');
+      titleSpan.className = 'fi-title';
+      titleSpan.textContent = title || shortUuid;
+      if (!title) titleSpan.style.color = 'var(--text2)';
+      item.appendChild(titleSpan);
+
+      if (isSub) {
+        const subSpan = document.createElement('span');
+        subSpan.className = 'fi-sub';
+        subSpan.textContent = 'sub';
+        item.appendChild(subSpan);
+      }
+
+      item.title = shortUuid + (title ? '\n' + title : '') + '\n' + dateStr;
+      item.addEventListener('click', () => loadFromServer(f.path));
+      group.appendChild(item);
     }
-    sel.appendChild(optgroup);
+    frag.appendChild(group);
   }
-  sel.style.display = recent.length ? '' : 'none';
+  list.appendChild(frag);
+}
+
+function toggleSidebar() {
+  document.body.classList.toggle('sidebar-open');
+}
+
+function scrollToActiveSidebarItem() {
+  const active = document.querySelector('#sidebarList .file-item.active');
+  if (active) active.scrollIntoView({ block: 'nearest' });
 }
 
 async function initFileChooser() {
@@ -553,7 +656,7 @@ async function initFileChooser() {
       const resp = await fetch('/api/files?limit=500&sort=mtime');
       cachedFileList = await resp.json();
       renderFileList(cachedFileList);
-      populateHeaderSelect(cachedFileList);
+      renderSidebarList(cachedFileList);
       document.getElementById('chooserHint').textContent = 'Found ' + cachedFileList.length + ' sessions in ~/.claude/projects';
     } catch (e) {
       document.getElementById('chooserHint').textContent = 'Error loading file list';
@@ -600,9 +703,22 @@ async function initFileChooser() {
     }, 200);
   });
 
-  // Header switcher
-  document.getElementById('headerFileSelect').addEventListener('change', function() {
-    if (this.value) loadFromServer(this.value);
+  // Sidebar events
+  document.getElementById('sidebarToggle').addEventListener('click', toggleSidebar);
+  document.getElementById('sidebarClose').addEventListener('click', toggleSidebar);
+
+  // Sidebar search filter
+  let sidebarSearchTimer;
+  document.getElementById('sidebarSearch').addEventListener('input', e => {
+    clearTimeout(sidebarSearchTimer);
+    sidebarSearchTimer = setTimeout(() => {
+      const q = e.target.value.toLowerCase();
+      if (!q) { renderSidebarList(cachedFileList); return; }
+      const filtered = cachedFileList.filter(f =>
+        f.project.toLowerCase().includes(q) || f.uuid.toLowerCase().includes(q) || (f.title || '').toLowerCase().includes(q)
+      );
+      renderSidebarList(filtered);
+    }, 200);
   });
 }
 
