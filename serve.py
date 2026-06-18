@@ -223,11 +223,12 @@ class Handler(BaseHTTPRequestHandler):
         limit = min(int(params.get("limit", ["100"])[0]), 500)
         files = files[:limit]
 
+        payload = {"home": os.path.expanduser("~"), "files": files}
         self.send_response(200)
         self.send_header("Content-Type", "application/json")
         self.send_header("Access-Control-Allow-Origin", "*")
         self.end_headers()
-        self.wfile.write(json.dumps(files).encode())
+        self.wfile.write(json.dumps(payload).encode())
 
     def _serve_jsonl(self, params):
         rel_path = params.get("path", [""])[0]
