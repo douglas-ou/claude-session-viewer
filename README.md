@@ -27,7 +27,7 @@ Or run directly with Python:
 python3 serve.py
 ```
 
-The viewer opens automatically at `http://localhost:8124`.
+The viewer is available at `http://localhost:8124`.
 
 ## How It Works
 

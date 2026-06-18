@@ -13,7 +13,6 @@ import json
 import time
 import functools
 from datetime import datetime, timezone
-import webbrowser
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from urllib.parse import urlparse, parse_qs
 
@@ -268,7 +267,6 @@ def main():
     url = f"http://localhost:{PORT}"
     print(f"Session Viewer: {url}")
     print(f"LAN access:     http://<your-lan-ip>:{PORT}")
-    webbrowser.open(url)
     try:
         server.serve_forever()
     except KeyboardInterrupt:
