@@ -264,10 +264,15 @@
     cursor: pointer; user-select: none;
   }
   .project-header:hover { color: var(--text); }
+  .project-header .toggle-arrow {
+    font-size: 10px; transition: transform 0.15s; display: inline-block;
+  }
+  .project-header.collapsed .toggle-arrow { transform: rotate(-90deg); }
   .project-header .count {
     font-weight: 400; font-size: 11px; background: var(--border);
     padding: 1px 6px; border-radius: 10px;
   }
+  .project-group.collapsed > :not(.project-header) { display: none; }
   .file-item {
     display: flex; align-items: center; gap: 12px;
     padding: 8px 24px; cursor: pointer; transition: background 0.1s;
@@ -302,11 +307,19 @@
   }
   .drop-zone-inline.drag-over { border-color: var(--accent); color: var(--accent); }
   /* Sidebar */
+  :root { --sidebar-w: 420px; }
   .sidebar {
-    position: fixed; left: 0; top: 0; bottom: 0; width: 320px;
+    position: fixed; left: 0; top: 0; bottom: 0; width: var(--sidebar-w);
     background: var(--surface); border-right: 1px solid var(--border);
     z-index: 150; display: flex; flex-direction: column;
     transform: translateX(-100%); transition: transform 0.2s ease;
+  }
+  .sidebar-resize {
+    position: absolute; right: -3px; top: 0; bottom: 0; width: 6px;
+    cursor: col-resize; z-index: 10;
+  }
+  .sidebar-resize:hover, .sidebar-resize.dragging {
+    background: var(--accent); opacity: 0.3;
   }
   body.sidebar-open .sidebar { transform: translateX(0); }
   .sidebar-header {
@@ -341,7 +354,7 @@
   body.sidebar-open .toolbar,
   body.sidebar-open .timeline,
   body.sidebar-open .footer-info {
-    margin-left: 320px;
+    margin-left: var(--sidebar-w);
   }
   .sidebar-toggle {
     background: none; border: 1px solid var(--border); cursor: pointer;
@@ -349,6 +362,12 @@
     line-height: 1;
   }
   .sidebar-toggle:hover { color: var(--text); border-color: var(--text2); }
+  .locate-btn {
+    background: none; border: 1px solid var(--border); cursor: pointer;
+    color: var(--text2); font-size: 14px; padding: 2px 8px; border-radius: 4px;
+    line-height: 1; margin-left: 4px;
+  }
+  .locate-btn:hover { color: var(--text); border-color: var(--text2); }
   .chooser-empty { padding: 40px 20px; text-align: center; color: var(--text2); font-size: 13px; }
   /* Subagent nesting */
   .file-item-main { position: relative; }
@@ -407,6 +426,7 @@
     <input type="text" class="sidebar-search" id="sidebarSearch" placeholder="Search sessions...">
   </div>
   <div class="sidebar-list" id="sidebarList"></div>
+  <div class="sidebar-resize" id="sidebarResize"></div>
 </div>
 
 <div class="loading-overlay hidden" id="loading">
@@ -432,7 +452,9 @@
 </div>
 
 <div class="header">
+  <button class="locate-btn" id="homeBtn" title="Choose a Session">&#8962;</button>
   <button class="sidebar-toggle" id="sidebarToggle" title="Toggle sidebar">&#9776;</button>
+  <button class="locate-btn" id="locateBtn" title="Locate in sidebar">&#8857;</button>
   <h1>Session Viewer</h1>
   <div class="meta" id="headerMeta"></div>
 </div>
@@ -475,6 +497,7 @@ let showProgress = false;
 let searchQuery = '';
 let serverMode = false;
 let cachedFileList = [];
+let cachedHomeDir = '';
 let currentFilePath = '';
 let agentResultMap = new Map();
 
@@ -614,7 +637,11 @@ function renderFileList(files) {
     const totalCount = items.reduce((s, f) => s + 1 + (parentMap.get(f.uuid)?.length || 0), 0);
     const header = document.createElement('div');
     header.className = 'project-header';
-    header.innerHTML = '<span>' + esc(proj) + '</span><span class="count">' + totalCount + '</span>';
+    header.innerHTML = '<span class="toggle-arrow">▼</span><span>' + esc(proj) + '</span><span class="count">' + totalCount + '</span>';
+    header.addEventListener('click', function() {
+      group.classList.toggle('collapsed');
+      header.classList.toggle('collapsed');
+    });
     group.appendChild(header);
 
     for (const f of items) {
@@ -676,7 +703,11 @@ function renderFileList(files) {
     group.className = 'project-group';
     const header = document.createElement('div');
     header.className = 'project-header';
-    header.innerHTML = '<span>(orphaned subagents)</span><span class="count">' + orphans.length + '</span>';
+    header.innerHTML = '<span class="toggle-arrow">▼</span><span>(orphaned subagents)</span><span class="count">' + orphans.length + '</span>';
+    header.addEventListener('click', function() {
+      group.classList.toggle('collapsed');
+      header.classList.toggle('collapsed');
+    });
     group.appendChild(header);
     for (const c of orphans) {
       const meta = c.agent_meta || {};
@@ -754,6 +785,10 @@ function renderSidebarList(files) {
     group.className = 'project-group';
     const header = document.createElement('div');
     header.className = 'project-header';
+    const arrow = document.createElement('span');
+    arrow.className = 'toggle-arrow';
+    arrow.textContent = '▼';
+    header.appendChild(arrow);
     const headerLabel = document.createElement('span');
     headerLabel.textContent = proj;
     const headerCount = document.createElement('span');
@@ -761,6 +796,10 @@ function renderSidebarList(files) {
     headerCount.textContent = items.length;
     header.appendChild(headerLabel);
     header.appendChild(headerCount);
+    header.addEventListener('click', function() {
+      group.classList.toggle('collapsed');
+      header.classList.toggle('collapsed');
+    });
     group.appendChild(header);
     for (const f of items) {
       const item = document.createElement('div');
@@ -804,7 +843,12 @@ function toggleSidebar() {
 
 function scrollToActiveSidebarItem() {
   const active = document.querySelector('#sidebarList .file-item.active');
-  if (active) active.scrollIntoView({ block: 'nearest' });
+  if (!active) return;
+  const list = document.getElementById('sidebarList');
+  const stickyHeader = active.closest('.project-group')?.querySelector('.project-header');
+  const headerH = stickyHeader ? stickyHeader.offsetHeight : 0;
+  const top = active.offsetTop - list.offsetTop - headerH - 8;
+  list.scrollTo({ top: Math.max(0, top), behavior: 'smooth' });
 }
 
 async function initFileChooser() {
@@ -824,7 +868,9 @@ async function initFileChooser() {
     // Load full file list
     try {
       const resp = await fetch('/api/files?limit=500&sort=mtime');
-      cachedFileList = await resp.json();
+      const payload = await resp.json();
+      cachedFileList = payload.files || payload;
+      cachedHomeDir = payload.home || '';
       renderFileList(cachedFileList);
       renderSidebarList(cachedFileList);
       document.getElementById('chooserHint').textContent = 'Found ' + cachedFileList.length + ' sessions in ~/.claude/projects';
@@ -873,9 +919,39 @@ async function initFileChooser() {
     }, 200);
   });
 
+  // Header events
+  document.getElementById('homeBtn').addEventListener('click', () => {
+    document.getElementById('fileChooser').classList.remove('hidden');
+  });
+
   // Sidebar events
   document.getElementById('sidebarToggle').addEventListener('click', toggleSidebar);
   document.getElementById('sidebarClose').addEventListener('click', toggleSidebar);
+  document.getElementById('locateBtn').addEventListener('click', () => {
+    document.body.classList.add('sidebar-open');
+    scrollToActiveSidebarItem();
+  });
+
+  // Sidebar resize drag
+  const resizeHandle = document.getElementById('sidebarResize');
+  resizeHandle.addEventListener('mousedown', e => {
+    e.preventDefault();
+    resizeHandle.classList.add('dragging');
+    const sidebar = document.getElementById('sidebar');
+    sidebar.style.transition = 'none';
+    const onMove = ev => {
+      const w = Math.min(Math.max(ev.clientX, 240), window.innerWidth * 0.6);
+      document.documentElement.style.setProperty('--sidebar-w', w + 'px');
+    };
+    const onUp = () => {
+      resizeHandle.classList.remove('dragging');
+      sidebar.style.transition = '';
+      document.removeEventListener('mousemove', onMove);
+      document.removeEventListener('mouseup', onUp);
+    };
+    document.addEventListener('mousemove', onMove);
+    document.addEventListener('mouseup', onUp);
+  });
 
   // Sidebar search filter
   let sidebarSearchTimer;
@@ -1020,11 +1096,44 @@ function renderStats() {
     hm.appendChild(s);
   });
   if (currentUuid) {
+    const cached = cachedFileList.find(f => f.path === currentFilePath);
+    if (cached && cached.project) {
+      const pathSpan = document.createElement('span');
+      pathSpan.style.cssText = 'font-family:"SF Mono",Monaco,monospace;font-size:11px;color:var(--text2);user-select:all;';
+      pathSpan.textContent = '~/' + cached.project;
+      hm.appendChild(pathSpan);
+    }
     const uuidSpan = document.createElement('span');
     uuidSpan.style.cssText = 'font-family:"SF Mono",Monaco,monospace;font-size:11px;color:var(--text2);cursor:pointer;user-select:all;';
     uuidSpan.textContent = currentUuid;
     uuidSpan.title = 'Click to select UUID';
     hm.appendChild(uuidSpan);
+    if (cached && cached.project) {
+      const resumeBtn = document.createElement('button');
+      resumeBtn.className = 'expand-btn';
+      resumeBtn.style.cssText = 'background:var(--purple);font-size:11px;padding:3px 10px;margin-left:4px;';
+      resumeBtn.textContent = 'Resume';
+      resumeBtn.title = 'Copy tmux resume command to clipboard';
+      resumeBtn.addEventListener('click', function() {
+        const lastSeg = cached.project.split('/').pop();
+        const sessionName = (lastSeg + '-' + currentUuid.slice(0, 8)).replace(/[.:]/g, '-');
+        const projectDir = cachedHomeDir ? cachedHomeDir + '/' + cached.project : '~/' + cached.project;
+        const cmd = 'tmux attach -t "' + sessionName + '" 2>/dev/null || tmux new-session -s "' + sessionName + '" -c "' + projectDir + '" "claude --resume ' + currentUuid + ' --dangerously-skip-permissions"';
+        navigator.clipboard.writeText(cmd).then(() => {
+          resumeBtn.textContent = 'Copied!';
+          setTimeout(() => { resumeBtn.textContent = 'Resume'; }, 1500);
+        }).catch(() => {
+          const ta = document.createElement('textarea');
+          ta.value = cmd; ta.style.position = 'fixed'; ta.style.opacity = '0';
+          document.body.appendChild(ta); ta.select();
+          document.execCommand('copy');
+          document.body.removeChild(ta);
+          resumeBtn.textContent = 'Copied!';
+          setTimeout(() => { resumeBtn.textContent = 'Resume'; }, 1500);
+        });
+      });
+      hm.appendChild(resumeBtn);
+    }
   }
 
   // Stats cards - built with DOM
@@ -1109,7 +1218,7 @@ function renderTimelineViz() {
 
 function buildCard(info, idx) {
   const card = document.createElement('div');
-  card.className = 'msg-card';
+  card.className = 'msg-card expanded';
   card.dataset.idx = idx;
   card.dataset.type = info.type;
 
@@ -1346,6 +1455,7 @@ function filterAndRender() {
   }
 
   setText('footer', 'Showing ' + Math.min(filteredRecords.length, limit) + ' of ' + filteredRecords.length + ' messages');
+  document.getElementById('expandAllBtn').textContent = 'Collapse All';
 }
 
 // Events
