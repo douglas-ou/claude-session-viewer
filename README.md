@@ -46,6 +46,20 @@ session-viewer.html →   Frontend renders session list & timeline
 
 `session-viewer.html` is a single-file frontend that renders the session list, message timeline, and search/filter UI.
 
+## Auto-Start on Login (macOS)
+
+Run the service automatically in the background when you log in:
+
+```bash
+./launchctl.sh install    # Install and start (auto-starts on login)
+./launchctl.sh status     # Check service status
+./launchctl.sh logs       # Tail log output
+./launchctl.sh restart    # Restart after code updates
+./launchctl.sh uninstall  # Remove the service
+```
+
+Logs are stored in `~/Library/Logs/claude-session-viewer/`.
+
 ## Requirements
 
 - Python 3.7+
